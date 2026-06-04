@@ -31,7 +31,13 @@ var (
 	isPublishing bool
 )
 
-// CustomError adalah struktur data log yang rapi dan terstruktur
+// CustomError is the structured error payload produced by this package.
+//
+// It contains the information needed for logs and alerts: timestamp,
+// environment, service name, error type, human-readable description, raw error
+// text, caller file path, caller line number, and caller function name.
+// In production, this structure is serialized to JSON and can be published to
+// Kafka for downstream alert delivery, such as Telegram notifications.
 type CustomError struct {
 	Timestamp    string `json:"timestamp"`
 	Environment  string `json:"environment"`
@@ -44,7 +50,12 @@ type CustomError struct {
 	FunctionName string `json:"function"`
 }
 
-// Error mengubah output sesuai Environment (Lokal = Berwarna, Prod = JSON)
+// Error returns a formatted representation of the structured error.
+//
+// In non-production environments it returns a colored terminal-friendly string
+// containing the timestamp, file, line, error type, description, and raw error.
+// In production it returns the JSON representation of CustomError, which is
+// suitable for logs, Kafka messages, and alert consumers.
 func (e *CustomError) Error() string {
 	if appEnv != "production" {
 		return fmt.Sprintf("%s[%s]%s %s➔%s %s%s:%d%s |\033[33m [%s]\033[0m %s%s%s (%s%s%s)",
@@ -61,7 +72,17 @@ func (e *CustomError) Error() string {
 	return string(b)
 }
 
-// Init wajib dipanggil sekali di main.go service Anda sebelum service berjalan
+// Init loads reporter configuration from environment variables.
+//
+// Call Init once during application startup before using AutoWrap or Wrap. It
+// reads APP_NAME, APP_ENV, KAFKA_BROKERS, and KAFKA_TOPIC. When APP_ENV is
+// "production" and Kafka settings are complete, Init prepares a Kafka writer so
+// every reported error can be published asynchronously.
+//
+// Example:
+//
+//	reporter.Init()
+//	defer reporter.Close()
 func Init() {
 	appName = os.Getenv("APP_NAME")
 	appEnv = os.Getenv("APP_ENV")
@@ -88,14 +109,35 @@ func Init() {
 	}
 }
 
-// Close digunakan untuk menutup koneksi Kafka secara aman (graceful shutdown)
+// Close releases the Kafka writer used by reporter.
+//
+// Call Close during graceful shutdown after Init has been called. It is safe to
+// call even when Kafka publishing is not enabled.
+//
+// Example:
+//
+//	reporter.Init()
+//	defer reporter.Close()
 func Close() {
 	if kafkaWriter != nil {
 		kafkaWriter.Close()
 	}
 }
 
-// AutoWrap mendeteksi error secara otomatis dan membuat deskripsi tanpa ketik manual
+// AutoWrap converts an ordinary error into a structured report with automatic classification.
+//
+// AutoWrap returns nil when err is nil. Otherwise it inspects err.Error() and
+// assigns an error type and description for known patterns such as connection
+// failures, duplicate keys, deadline timeouts, and missing data. The returned
+// error captures the caller file path, line number, and function name. In
+// production, the report is also published to Kafka when Init configured a
+// writer.
+//
+// Example:
+//
+//	if err := repository.FindUser(id); err != nil {
+//		return reporter.AutoWrap(err)
+//	}
 func AutoWrap(err error) error {
 	if err == nil {
 		return nil
@@ -128,7 +170,20 @@ func AutoWrap(err error) error {
 	return newError(errType, autoDesc, errStr, 2)
 }
 
-// Wrap tetap disediakan jika Anda ingin memaksakan deskripsi buatan sendiri
+// Wrap converts an ordinary error into a structured report with a custom description.
+//
+// Wrap returns nil when err is nil. Use Wrap when the application can provide
+// better business context than automatic classification. The original error is
+// preserved in RawError, while customDesc is stored in Description. The returned
+// error captures the caller file path, line number, and function name. In
+// production, the report is also published to Kafka when Init configured a
+// writer.
+//
+// Example:
+//
+//	if err := repository.SaveOrder(order); err != nil {
+//		return reporter.Wrap(err, "Failed to save checkout order after payment was confirmed")
+//	}
 func Wrap(err error, customDesc string) error {
 	if err == nil {
 		return nil

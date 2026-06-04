@@ -38,7 +38,7 @@ Kafka publishing is non-blocking. When `APP_ENV=production` and Kafka configurat
 ## Installation
 
 ```bash
-go get learncodexx/reporter
+go get LearnCodexx/reporter
 ```
 
 If this package is used from a private/local module, replace the module path with your repository import path.
@@ -52,7 +52,7 @@ import (
     "errors"
     "fmt"
 
-    "learncodexx/reporter"
+    "LearnCodexx/reporter"
 )
 
 func main() {
@@ -114,7 +114,7 @@ package main
 import (
     "log"
 
-    "learncodexx/reporter"
+    "LearnCodexx/reporter"
 )
 
 func main() {
