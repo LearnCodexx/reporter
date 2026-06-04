@@ -1,4 +1,4 @@
-module LearnCodexx/reporter
+module learncodexx/reporter
 
 go 1.25.5
 
