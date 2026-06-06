@@ -57,23 +57,23 @@ defer reporter.Close()
 
 `Config` fields:
 
-| Field              | Required | Description                                                                                          |
-| ------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
-| `AppName`          | No       | Service name included in every report. Defaults to `unknown-service`.                                |
-| `AppEnv`           | No       | Runtime environment. Defaults to `development`. `production` makes `Error()` return JSON.            |
-| `KafkaBrokers`     | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                           |
-| `KafkaTopic`       | Kafka    | Kafka topic used for alert messages.                                                                 |
-| `EnablePublishing` | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`. |
-| `Publisher`        | No       | Optional custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config. |
-| `PublishMinSeverity` | No     | Minimum severity that may be published. Defaults to `danger`, so handled errors such as duplicate data are not sent to Kafka/Redis. |
-| `AutoWrapFallbackSeverity` | No | Severity for `AutoWrap` errors that do not match any known pattern. Defaults to `danger`. |
+| Field                      | Required | Description                                                                                                                         |
+| -------------------------- | -------- | ----------------------------------------------------------------------------------------------------------------------------------- |
+| `AppName`                  | No       | Service name included in every report. Defaults to `unknown-service`.                                                               |
+| `AppEnv`                   | No       | Runtime environment. Defaults to `development`. `production` makes `Error()` return JSON.                                           |
+| `KafkaBrokers`             | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                                                          |
+| `KafkaTopic`               | Kafka    | Kafka topic used for alert messages.                                                                                                |
+| `EnablePublishing`         | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`.                               |
+| `Publisher`                | No       | Optional custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config.                          |
+| `PublishMinSeverity`       | No       | Minimum severity that may be published. Defaults to `danger`, so handled errors such as duplicate data are not sent to Kafka/Redis. |
+| `AutoWrapFallbackSeverity` | No       | Severity for `AutoWrap` errors that do not match any known pattern. Defaults to `danger`.                                           |
 
 Publishing is non-blocking. When `EnablePublishing=true` and either `Publisher` or Kafka configuration is complete, the package sends the structured payload in a background goroutine. If publishing fails, the failure is written to `stderr` so the original error is not lost.
 
 Severity values:
 
-| Severity   | Typical Use                                                        | Published by Default |
-| ---------- | ------------------------------------------------------------------ | -------------------- |
+| Severity   | Typical Use                                                         | Published by Default |
+| ---------- | ------------------------------------------------------------------- | -------------------- |
 | `info`     | Handled business/data cases such as duplicate data or not found.    | No                   |
 | `warning`  | Recoverable issues that should be watched but do not need alerts.   | No                   |
 | `danger`   | Serious application issues, HTTP 500-style failures, logic anomaly. | Yes                  |
@@ -202,57 +202,57 @@ if err := checkout(order); err != nil {
 
 HTTP status mapping:
 
-| Status Code | Error Type              | Severity  |
-| ----------- | ----------------------- | --------- |
-| `>=500`     | `INTERNAL_SERVER_ERROR` | `danger`  |
-| `429`       | `RATE_LIMIT_ERROR`      | `warning` |
-| `401`       | `AUTHENTICATION_ERROR`  | `warning` |
-| `403`       | `AUTHORIZATION_ERROR`   | `warning` |
-| `404`       | `DATA_NOT_FOUND`        | `info`    |
-| `400-499`   | `VALIDATION_ERROR`      | `info`    |
+| Status Code | Error Type              | Severity   |
+| ----------- | ----------------------- | ---------- |
+| `>=500`     | `INTERNAL_SERVER_ERROR` | `critical` |
+| `429`       | `RATE_LIMIT_ERROR`      | `warning`  |
+| `401`       | `AUTHENTICATION_ERROR`  | `warning`  |
+| `403`       | `AUTHORIZATION_ERROR`   | `warning`  |
+| `404`       | `DATA_NOT_FOUND`        | `info`     |
+| `400-499`   | `VALIDATION_ERROR`      | `info`     |
 
 ## Automatic Error Classification
 
 `AutoWrap` currently recognizes these common error families:
 
-| Error Type              | Matched Text Examples                         | Description Purpose                                      |
-| ----------------------- | --------------------------------------------- | -------------------------------------------------------- |
-| `INFRASTRUCTURE_ERROR`  | `connection refused`, `dial tcp`, `no route to host`, `broker not available` | Network, database, broker, or third-party connectivity failures. |
-| `DATABASE_CONSTRAINT`   | `duplicate key`, `violates unique constraint`, `foreign key constraint`, `not null constraint` | Database constraint conflicts while saving data. |
-| `DATABASE_QUERY_ERROR`  | `deadlock detected`, `relation does not exist`, `unknown column` | Query, schema, lock, or transaction failures. |
-| `TIMEOUT_ERROR`         | `context deadline exceeded`, `gateway timeout`, `i/o timeout` | Work stopped because the execution deadline was reached. |
-| `DATA_NOT_FOUND`        | `no rows in result set`, `record not found`, `404` | Requested data does not exist. |
-| `VALIDATION_ERROR`      | `validation failed`, `invalid input`, `missing required`, `400`, `422` | Request/input is invalid and usually handled by the application. |
-| `AUTHENTICATION_ERROR`  | `unauthorized`, `invalid token`, `jwt expired`, `401` | Authentication is missing, invalid, or expired. |
-| `AUTHORIZATION_ERROR`   | `forbidden`, `permission denied`, `access denied`, `403` | Caller does not have permission. |
-| `RATE_LIMIT_ERROR`      | `rate limit`, `too many requests`, `quota exceeded`, `429` | Rate limit or quota was exceeded. |
-| `SERIALIZATION_ERROR`   | `json:`, `cannot unmarshal`, `invalid character`, `yaml:` | Encoding or decoding structured data failed. |
-| `EXTERNAL_SERVICE_ERROR` | `service unavailable`, `bad gateway`, `upstream`, `502`, `503` | Downstream or third-party service failed. |
-| `RESOURCE_EXHAUSTION`   | `out of memory`, `no space left on device`, `too many open files` | Service is running out of critical system resources. |
-| `CONFIGURATION_ERROR`   | `missing environment variable`, `invalid configuration`, `missing config` | Runtime configuration is missing or invalid. |
-| `LOGIC_ANOMALY`         | `panic`, `nil pointer`, `index out of range`, `invalid state`, `invariant` | Unexpected application logic failure. |
-| `INTERNAL_SERVER_ERROR` | `status 500`, `http 500`, `internal server error` | Service returned an HTTP 500-style failure. |
-| `GENERAL_ERROR`         | Anything else                                 | Fallback for errors that do not match known patterns.    |
+| Error Type               | Matched Text Examples                                                                          | Description Purpose                                              |
+| ------------------------ | ---------------------------------------------------------------------------------------------- | ---------------------------------------------------------------- |
+| `INFRASTRUCTURE_ERROR`   | `connection refused`, `dial tcp`, `no route to host`, `broker not available`                   | Network, database, broker, or third-party connectivity failures. |
+| `DATABASE_CONSTRAINT`    | `duplicate key`, `violates unique constraint`, `foreign key constraint`, `not null constraint` | Database constraint conflicts while saving data.                 |
+| `DATABASE_QUERY_ERROR`   | `deadlock detected`, `relation does not exist`, `unknown column`                               | Query, schema, lock, or transaction failures.                    |
+| `TIMEOUT_ERROR`          | `context deadline exceeded`, `gateway timeout`, `i/o timeout`                                  | Work stopped because the execution deadline was reached.         |
+| `DATA_NOT_FOUND`         | `no rows in result set`, `record not found`, `404`                                             | Requested data does not exist.                                   |
+| `VALIDATION_ERROR`       | `validation failed`, `invalid input`, `missing required`, `400`, `422`                         | Request/input is invalid and usually handled by the application. |
+| `AUTHENTICATION_ERROR`   | `unauthorized`, `invalid token`, `jwt expired`, `401`                                          | Authentication is missing, invalid, or expired.                  |
+| `AUTHORIZATION_ERROR`    | `forbidden`, `permission denied`, `access denied`, `403`                                       | Caller does not have permission.                                 |
+| `RATE_LIMIT_ERROR`       | `rate limit`, `too many requests`, `quota exceeded`, `429`                                     | Rate limit or quota was exceeded.                                |
+| `SERIALIZATION_ERROR`    | `json:`, `cannot unmarshal`, `invalid character`, `yaml:`                                      | Encoding or decoding structured data failed.                     |
+| `EXTERNAL_SERVICE_ERROR` | `service unavailable`, `bad gateway`, `upstream`, `502`, `503`                                 | Downstream or third-party service failed.                        |
+| `RESOURCE_EXHAUSTION`    | `out of memory`, `no space left on device`, `too many open files`                              | Service is running out of critical system resources.             |
+| `CONFIGURATION_ERROR`    | `missing environment variable`, `invalid configuration`, `missing config`                      | Runtime configuration is missing or invalid.                     |
+| `LOGIC_ANOMALY`          | `panic`, `nil pointer`, `index out of range`, `invalid state`, `invariant`                     | Unexpected application logic failure.                            |
+| `INTERNAL_SERVER_ERROR`  | `status 500`, `http 500`, `internal server error`                                              | Service returned an HTTP 500-style failure.                      |
+| `GENERAL_ERROR`          | Anything else                                                                                  | Fallback for errors that do not match known patterns.            |
 
 Automatic severity mapping:
 
-| Error Type              | Severity   |
-| ----------------------- | ---------- |
-| `DATABASE_CONSTRAINT`   | `info` or `warning`, depending on the constraint |
-| `DATA_NOT_FOUND`        | `info`     |
-| `VALIDATION_ERROR`      | `info`     |
-| `AUTHENTICATION_ERROR`  | `warning`  |
-| `AUTHORIZATION_ERROR`   | `warning`  |
-| `RATE_LIMIT_ERROR`      | `warning`  |
-| `TIMEOUT_ERROR`         | `danger`   |
-| `DATABASE_QUERY_ERROR`  | `danger`   |
-| `SERIALIZATION_ERROR`   | `danger`   |
-| `EXTERNAL_SERVICE_ERROR` | `danger`  |
-| `LOGIC_ANOMALY`         | `danger`   |
-| `INTERNAL_SERVER_ERROR` | `danger`   |
-| `RESOURCE_EXHAUSTION`   | `critical` |
-| `CONFIGURATION_ERROR`   | `critical` |
-| `GENERAL_ERROR`         | `AutoWrapFallbackSeverity`, default `danger` |
+| Error Type               | Severity                                         |
+| ------------------------ | ------------------------------------------------ |
+| `DATABASE_CONSTRAINT`    | `info` or `warning`, depending on the constraint |
+| `DATA_NOT_FOUND`         | `info`                                           |
+| `VALIDATION_ERROR`       | `info`                                           |
+| `AUTHENTICATION_ERROR`   | `warning`                                        |
+| `AUTHORIZATION_ERROR`    | `warning`                                        |
+| `RATE_LIMIT_ERROR`       | `warning`                                        |
+| `TIMEOUT_ERROR`          | `danger`                                         |
+| `DATABASE_QUERY_ERROR`   | `danger`                                         |
+| `SERIALIZATION_ERROR`    | `danger`                                         |
+| `EXTERNAL_SERVICE_ERROR` | `danger`                                         |
+| `LOGIC_ANOMALY`          | `danger`                                         |
+| `INTERNAL_SERVER_ERROR`  | `danger`                                         |
+| `RESOURCE_EXHAUSTION`    | `critical`                                       |
+| `CONFIGURATION_ERROR`    | `critical`                                       |
+| `GENERAL_ERROR`          | `AutoWrapFallbackSeverity`, default `danger`     |
 
 If `AutoWrap` does not match any known pattern, it returns `GENERAL_ERROR`. The severity comes from `AutoWrapFallbackSeverity`; when that config is empty, reporter uses `danger`. This keeps unknown 500-style failures visible by default, while still allowing a service to lower the fallback to `warning` if it has many known-but-unclassified handled errors.
 
@@ -421,13 +421,13 @@ if customErr, ok := err.(*reporter.CustomError); ok {
 
 The package also has several unexported helper functions. They are implementation details and are not part of the public API:
 
-| Function           | Purpose                                                                 |
-| ------------------ | ----------------------------------------------------------------------- |
+| Function           | Purpose                                                                                          |
+| ------------------ | ------------------------------------------------------------------------------------------------ |
 | `newError`         | Builds `CustomError`, captures caller metadata, prints it, and triggers publishing when enabled. |
-| `publish`          | Sends `CustomError` to the configured publisher.                        |
-| `containsAny`      | Checks whether a string contains at least one expected substring.       |
-| `byteContains`     | Performs byte-level substring matching.                                 |
-| `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase.                          |
+| `publish`          | Sends `CustomError` to the configured publisher.                                                 |
+| `containsAny`      | Checks whether a string contains at least one expected substring.                                |
+| `byteContains`     | Performs byte-level substring matching.                                                          |
+| `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase.                                                   |
 
 These helpers are not exported, so application code should use only `Init`, `Close`, `AutoWrap`, `Wrap`, `Config`, and `CustomError`.
 
