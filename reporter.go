@@ -630,7 +630,7 @@ func severityRank(severity string) int {
 func classifyHTTPStatus(statusCode int) (string, string, string) {
 	switch {
 	case statusCode >= 500:
-		return "INTERNAL_SERVER_ERROR", SeverityDanger, "The service returned an internal server error"
+		return "INTERNAL_SERVER_ERROR", SeverityCritical, "The service returned an internal server error"
 	case statusCode == 429:
 		return "RATE_LIMIT_ERROR", SeverityWarning, "The request failed because a rate limit or quota was exceeded"
 	case statusCode == 401:
