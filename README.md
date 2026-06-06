@@ -22,6 +22,8 @@ Each wrapped error is represented as `CustomError`:
 
 In non-production environments, `err.Error()` returns a colored terminal-friendly message. In production, `err.Error()` returns JSON.
 
+`AutoWrap` and `Wrap` print the formatted report automatically when they create a `CustomError`. Do not print the returned error again unless you intentionally want duplicate output.
+
 ## Configuration
 
 Call `reporter.Init(config)` once during service startup. Configuration is passed explicitly through `reporter.Config`, so this package does not read environment variables directly.
@@ -74,7 +76,6 @@ package main
 
 import (
     "errors"
-    "fmt"
 
     "github.com/learncodexx/reporter"
 )
@@ -88,8 +89,7 @@ func main() {
 
     err := doWork()
     if err != nil {
-        wrappedErr := reporter.AutoWrap(err)
-        fmt.Println(wrappedErr.Error())
+        reporter.AutoWrap(err)
         return
     }
 }
@@ -132,8 +132,6 @@ This keeps the original error in `raw_error` while adding a human-readable expla
 package main
 
 import (
-    "log"
-
     "github.com/learncodexx/reporter"
 )
 
@@ -148,7 +146,8 @@ func main() {
     defer reporter.Close()
 
     if err := run(); err != nil {
-        log.Println(reporter.AutoWrap(err))
+        reporter.AutoWrap(err)
+        return
     }
 }
 ```
@@ -189,29 +188,31 @@ func Wrap(err error, customDesc string) error
 
 - `Init(cfg)` stores reporter configuration and prepares Kafka publishing when `EnablePublishing`, `KafkaBrokers`, and `KafkaTopic` are complete.
 - `Close()` closes the Kafka writer during graceful shutdown.
-- `AutoWrap(err)` returns `nil` for `nil` input, otherwise returns a structured `CustomError` with automatic classification.
-- `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise returns a structured `CustomError` using your custom description.
+- `AutoWrap(err)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` with automatic classification.
+- `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` using your custom description.
 
 The returned error can be type-asserted to `*reporter.CustomError` when you need direct access to fields such as `ErrorType`, `File`, `Line`, or `FunctionName`:
 
 ```go
 err := reporter.AutoWrap(rawErr)
 if customErr, ok := err.(*reporter.CustomError); ok {
-    log.Println(customErr.ErrorType, customErr.File, customErr.Line)
+    _ = customErr.ErrorType
+    _ = customErr.File
+    _ = customErr.Line
 }
 ```
 
 ## Internal Helpers
 
-The package also has several unexported helper functions used internally:
+The package also has several unexported helper functions. They are implementation details and are not part of the public API:
 
 | Function           | Purpose                                                                 |
 | ------------------ | ----------------------------------------------------------------------- |
 | `newError`         | Builds `CustomError`, captures caller metadata, prints it, and triggers Kafka publishing when enabled. |
 | `sendToKafka`      | Serializes `CustomError` to JSON and writes it to Kafka.                |
 | `containsAny`      | Checks whether a string contains at least one expected substring.       |
-| `byteContains`     | Performs byte-level substring matching for internal checks.             |
-| `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase for internal normalization. |
+| `byteContains`     | Performs byte-level substring matching.                                 |
+| `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase.                          |
 
 These helpers are not exported, so application code should use only `Init`, `Close`, `AutoWrap`, `Wrap`, `Config`, and `CustomError`.
 

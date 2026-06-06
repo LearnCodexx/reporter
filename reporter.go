@@ -13,7 +13,7 @@ import (
 	"github.com/segmentio/kafka-go"
 )
 
-// ANSI Color Codes untuk log di terminal lokal
+// ANSI color codes for local terminal output.
 const (
 	cReset  = "\033[0m"
 	cRed    = "\033[31m"
@@ -23,7 +23,7 @@ const (
 	cBold   = "\033[1m"
 )
 
-// Global Variables untuk konfigurasi
+// Global configuration state.
 var (
 	appName      string
 	appEnv       string
@@ -78,7 +78,7 @@ func (e *CustomError) Error() string {
 			cGray, e.RawError, cReset,
 		)
 	}
-	// Format JSON murni untuk server logging
+	// Use pure JSON for server logging.
 	b, _ := json.Marshal(e)
 	return string(b)
 }
@@ -108,7 +108,7 @@ func Init(cfg Config) {
 		appEnv = "development"
 	}
 
-	// Koneksi Kafka hanya dibangun jika diizinkan oleh user DAN parameter fisiknya lengkap
+	// Build the Kafka connection only when publishing is enabled and settings are complete.
 	if cfg.EnablePublishing && len(cfg.KafkaBrokers) > 0 && cfg.KafkaTopic != "" {
 		kafkaWriter = &kafka.Writer{
 			Addr:     kafka.TCP(cfg.KafkaBrokers...),
@@ -117,7 +117,7 @@ func Init(cfg Config) {
 		}
 		isPublishing = true
 	} else {
-		// Pastikan false jika salah satu syarat tidak terpenuhi atau sengaja dimatikan
+		// Keep publishing disabled when any requirement is missing or explicitly disabled.
 		isPublishing = false
 	}
 }
@@ -158,25 +158,25 @@ func AutoWrap(err error) error {
 	errStr := err.Error()
 	errText := strings.ToLower(errStr)
 	errType := "GENERAL_ERROR"
-	autoDesc := "Terjadi kesalahan pada internal sistem"
+	autoDesc := "An internal system error occurred"
 
-	// Aturan pencarian otomatis kata kunci error
+	// Automatically classify common error text patterns.
 	switch {
 	case strings.Contains(errText, "connection refused"), strings.Contains(errText, "timeout"), strings.Contains(errText, "dial tcp"):
 		errType = "INFRASTRUCTURE_ERROR"
-		autoDesc = "Gagal terhubung ke database atau third-party API (Timeout/Refused)"
+		autoDesc = "Failed to connect to a database or third-party API (timeout/refused)"
 
 	case strings.Contains(errText, "duplicate key"), strings.Contains(errText, "violates unique constraint"):
 		errType = "DATABASE_CONSTRAINT"
-		autoDesc = "Gagal menyimpan data karena konflik duplikasi data"
+		autoDesc = "Failed to save data because of a duplicate data conflict"
 
 	case strings.Contains(errText, "context deadline exceeded"):
 		errType = "TIMEOUT_ERROR"
-		autoDesc = "Proses dihentikan karena waktu eksekusi habis (Deadline Exceeded)"
+		autoDesc = "The process stopped because the execution deadline was exceeded"
 
 	case strings.Contains(errText, "no rows in result set"), strings.Contains(errText, "not found"):
 		errType = "DATA_NOT_FOUND"
-		autoDesc = "Data yang diminta tidak ditemukan di dalam sistem"
+		autoDesc = "The requested data was not found"
 	}
 
 	return newError(errType, autoDesc, errStr, 2)
@@ -203,7 +203,7 @@ func Wrap(err error, customDesc string) error {
 	return newError("CUSTOM_ERROR", customDesc, err.Error(), 2)
 }
 
-// Helper untuk menyusun objek error dan trigger goroutine publish
+// Helper that builds the error object and triggers asynchronous publishing.
 func newError(errType, desc, rawErr string, skip int) error {
 	pc, file, line, ok := runtime.Caller(skip)
 	fnName := "unknown"
@@ -233,7 +233,7 @@ func newError(errType, desc, rawErr string, skip int) error {
 
 	fmt.Println(customErr.Error())
 
-	// Kirim ke kafka secara non-blocking di background menggunakan goroutine
+	// Publish to Kafka in a non-blocking background goroutine.
 	if isPublishing {
 		go sendToKafka(customErr)
 	}
