@@ -31,6 +31,17 @@ var (
 	isPublishing bool
 )
 
+// Config holds all the configuration parameters required to initialize the reporter.
+// Passing this struct explicitly via function parameters provides better flexibility
+// and decouples the package from direct environment variable access.
+type Config struct {
+	AppName          string
+	AppEnv           string
+	KafkaBrokers     []string
+	KafkaTopic       string
+	EnablePublishing bool
+}
+
 // CustomError is the structured error payload produced by this package.
 //
 // It contains the information needed for logs and alerts: timestamp,
@@ -72,22 +83,23 @@ func (e *CustomError) Error() string {
 	return string(b)
 }
 
-// Init loads reporter configuration from environment variables.
+// Init applies reporter configuration for the current service.
 //
 // Call Init once during application startup before using AutoWrap or Wrap. It
-// reads APP_NAME, APP_ENV, KAFKA_BROKERS, and KAFKA_TOPIC. When APP_ENV is
-// "production" and Kafka settings are complete, Init prepares a Kafka writer so
-// every reported error can be published asynchronously.
+// stores the service name, environment, and optional Kafka settings. When
+// EnablePublishing is true and Kafka settings are complete, Init prepares a
+// Kafka writer so every reported error can be published asynchronously.
 //
 // Example:
 //
-//	reporter.Init()
+//	reporter.Init(reporter.Config{
+//		AppName: "payment-service",
+//		AppEnv:  "development",
+//	})
 //	defer reporter.Close()
-func Init() {
-	appName = os.Getenv("APP_NAME")
-	appEnv = os.Getenv("APP_ENV")
-	kafkaBrokers := os.Getenv("KAFKA_BROKERS")
-	kafkaTopic := os.Getenv("KAFKA_TOPIC")
+func Init(cfg Config) {
+	appName = cfg.AppName
+	appEnv = cfg.AppEnv
 
 	if appName == "" {
 		appName = "unknown-service"
@@ -96,16 +108,17 @@ func Init() {
 		appEnv = "development"
 	}
 
-	brokers := parseBrokers(kafkaBrokers)
-
-	// Hanya aktifkan pengiriman Kafka jika berada di env production dan setup env lengkap
-	if appEnv == "production" && len(brokers) > 0 && kafkaTopic != "" {
+	// Koneksi Kafka hanya dibangun jika diizinkan oleh user DAN parameter fisiknya lengkap
+	if cfg.EnablePublishing && len(cfg.KafkaBrokers) > 0 && cfg.KafkaTopic != "" {
 		kafkaWriter = &kafka.Writer{
-			Addr:     kafka.TCP(brokers...),
-			Topic:    kafkaTopic,
+			Addr:     kafka.TCP(cfg.KafkaBrokers...),
+			Topic:    cfg.KafkaTopic,
 			Balancer: &kafka.LeastBytes{},
 		}
 		isPublishing = true
+	} else {
+		// Pastikan false jika salah satu syarat tidak terpenuhi atau sengaja dimatikan
+		isPublishing = false
 	}
 }
 
@@ -116,7 +129,6 @@ func Init() {
 //
 // Example:
 //
-//	reporter.Init()
 //	defer reporter.Close()
 func Close() {
 	if kafkaWriter != nil {
@@ -219,6 +231,8 @@ func newError(errType, desc, rawErr string, skip int) error {
 		FunctionName: fnName,
 	}
 
+	fmt.Println(customErr.Error())
+
 	// Kirim ke kafka secara non-blocking di background menggunakan goroutine
 	if isPublishing {
 		go sendToKafka(customErr)
@@ -227,6 +241,7 @@ func newError(errType, desc, rawErr string, skip int) error {
 	return customErr
 }
 
+// Internal function to publish serialized JSON log payload to the Kafka broker.
 func sendToKafka(e *CustomError) {
 	payload, _ := json.Marshal(e)
 
@@ -236,24 +251,40 @@ func sendToKafka(e *CustomError) {
 	})
 
 	if err != nil {
-		// Jika Kafka mati/gagal koneksi, log dicetak ke Stderr agar tidak hilang begitu saja
+		// If Kafka is unreachable, pipe the error trace directly to Stderr to prevent silent data loss
 		fmt.Fprintf(os.Stderr, "\033[31m[Reporter Kafka Error]: %v\033[0m\n", err)
 	}
 }
 
-func parseBrokers(value string) []string {
-	if value == "" {
-		return nil
-	}
-
-	parts := strings.Split(value, ",")
-	brokers := make([]string, 0, len(parts))
-	for _, part := range parts {
-		broker := strings.TrimSpace(part)
-		if broker != "" {
-			brokers = append(brokers, broker)
+// Internal helper to check if a string contains any of the given substrings.
+func containsAny(s string, subs ...string) bool {
+	for _, sub := range subs {
+		if byteContains(s, sub) {
+			return true
 		}
 	}
+	return false
+}
 
-	return brokers
+// Optimized byte-level string match verification.
+func byteContains(s, sub string) bool {
+	for i := 0; i <= len(s)-len(sub); i++ {
+		if s[i:i+len(sub)] == sub {
+			return true
+		}
+	}
+	return false
+}
+
+// Low-level allocation-optimized case insensitivity converter.
+func jsonErrTextLower(s string) string {
+	b := make([]byte, len(s))
+	for i := 0; i < len(s); i++ {
+		c := s[i]
+		if 'A' <= c && c <= 'Z' {
+			c += 'a' - 'A'
+		}
+		b[i] = c
+	}
+	return string(b)
 }

@@ -24,21 +24,45 @@ In non-production environments, `err.Error()` returns a colored terminal-friendl
 
 ## Configuration
 
-Call `reporter.Init()` once during service startup. The package reads these environment variables:
+Call `reporter.Init(config)` once during service startup. Configuration is passed explicitly through `reporter.Config`, so this package does not read environment variables directly.
 
-| Variable | Required | Description |
-| --- | --- | --- |
-| `APP_NAME` | No | Service name included in every report. Defaults to `unknown-service`. |
-| `APP_ENV` | No | Runtime environment. Defaults to `development`. Kafka publishing is enabled only when this is `production`. |
-| `KAFKA_BROKERS` | Production only | Comma-separated Kafka broker list, for example `kafka-1:9092,kafka-2:9092`. |
-| `KAFKA_TOPIC` | Production only | Kafka topic used for alert messages. |
+```go
+reporter.Init(reporter.Config{
+    AppName:          "payment-service",
+    AppEnv:           "development",
+    EnablePublishing: false,
+})
+defer reporter.Close()
+```
 
-Kafka publishing is non-blocking. When `APP_ENV=production` and Kafka configuration is complete, the package sends the JSON payload in a background goroutine. If Kafka publishing fails, the failure is written to `stderr` so the original error is not lost.
+`Config` fields:
+
+| Field              | Required | Description                                                                                          |
+| ------------------ | -------- | ---------------------------------------------------------------------------------------------------- |
+| `AppName`          | No       | Service name included in every report. Defaults to `unknown-service`.                                |
+| `AppEnv`           | No       | Runtime environment. Defaults to `development`. `production` makes `Error()` return JSON.            |
+| `KafkaBrokers`     | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                           |
+| `KafkaTopic`       | Kafka    | Kafka topic used for alert messages.                                                                 |
+| `EnablePublishing` | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`. |
+
+Kafka publishing is non-blocking. When `EnablePublishing=true` and Kafka configuration is complete, the package sends the JSON payload in a background goroutine. If Kafka publishing fails, the failure is written to `stderr` so the original error is not lost.
+
+If your application stores config in environment variables, read and map them in your own service before calling `Init`:
+
+```go
+reporter.Init(reporter.Config{
+    AppName:          os.Getenv("APP_NAME"),
+    AppEnv:           os.Getenv("APP_ENV"),
+    KafkaBrokers:     strings.Split(os.Getenv("KAFKA_BROKERS"), ","),
+    KafkaTopic:       os.Getenv("KAFKA_TOPIC"),
+    EnablePublishing: os.Getenv("APP_ENV") == "production",
+})
+```
 
 ## Installation
 
 ```bash
-go get LearnCodexx/reporter
+go get github.com/learncodexx/reporter
 ```
 
 If this package is used from a private/local module, replace the module path with your repository import path.
@@ -52,11 +76,14 @@ import (
     "errors"
     "fmt"
 
-    "LearnCodexx/reporter"
+    "github.com/learncodexx/reporter"
 )
 
 func main() {
-    reporter.Init()
+    reporter.Init(reporter.Config{
+        AppName: "example-service",
+        AppEnv:  "development",
+    })
     defer reporter.Close()
 
     err := doWork()
@@ -91,22 +118,15 @@ This keeps the original error in `raw_error` while adding a human-readable expla
 
 `AutoWrap` currently recognizes these common error families:
 
-| Error Type | Matched Text | Description Purpose |
-| --- | --- | --- |
-| `INFRASTRUCTURE_ERROR` | `connection refused`, `timeout`, `dial tcp` | Network, database, or third-party connectivity failures. |
-| `DATABASE_CONSTRAINT` | `duplicate key`, `violates unique constraint` | Duplicate or uniqueness conflicts while saving data. |
-| `TIMEOUT_ERROR` | `context deadline exceeded` | Work stopped because the execution deadline was reached. |
-| `DATA_NOT_FOUND` | `no rows in result set`, `not found` | Requested data does not exist. |
-| `GENERAL_ERROR` | Anything else | Fallback for errors that do not match known patterns. |
+| Error Type             | Matched Text                                  | Description Purpose                                      |
+| ---------------------- | --------------------------------------------- | -------------------------------------------------------- |
+| `INFRASTRUCTURE_ERROR` | `connection refused`, `timeout`, `dial tcp`   | Network, database, or third-party connectivity failures. |
+| `DATABASE_CONSTRAINT`  | `duplicate key`, `violates unique constraint` | Duplicate or uniqueness conflicts while saving data.     |
+| `TIMEOUT_ERROR`        | `context deadline exceeded`                   | Work stopped because the execution deadline was reached. |
+| `DATA_NOT_FOUND`       | `no rows in result set`, `not found`          | Requested data does not exist.                           |
+| `GENERAL_ERROR`        | Anything else                                 | Fallback for errors that do not match known patterns.    |
 
 ## Production Kafka Example
-
-```bash
-export APP_NAME=payment-service
-export APP_ENV=production
-export KAFKA_BROKERS=kafka-1:9092,kafka-2:9092
-export KAFKA_TOPIC=service-alerts
-```
 
 ```go
 package main
@@ -114,11 +134,17 @@ package main
 import (
     "log"
 
-    "LearnCodexx/reporter"
+    "github.com/learncodexx/reporter"
 )
 
 func main() {
-    reporter.Init()
+    reporter.Init(reporter.Config{
+        AppName:          "payment-service",
+        AppEnv:           "production",
+        KafkaBrokers:     []string{"kafka-1:9092", "kafka-2:9092"},
+        KafkaTopic:       "service-alerts",
+        EnablePublishing: true,
+    })
     defer reporter.Close()
 
     if err := run(); err != nil {
@@ -147,19 +173,50 @@ Time: 2026-06-04 14:35:12
 ## API Summary
 
 ```go
-func Init()
+type Config struct {
+    AppName          string
+    AppEnv           string
+    KafkaBrokers     []string
+    KafkaTopic       string
+    EnablePublishing bool
+}
+
+func Init(cfg Config)
 func Close()
 func AutoWrap(err error) error
 func Wrap(err error, customDesc string) error
 ```
 
-- `Init()` loads environment configuration and prepares Kafka publishing when production settings are complete.
+- `Init(cfg)` stores reporter configuration and prepares Kafka publishing when `EnablePublishing`, `KafkaBrokers`, and `KafkaTopic` are complete.
 - `Close()` closes the Kafka writer during graceful shutdown.
 - `AutoWrap(err)` returns `nil` for `nil` input, otherwise returns a structured `CustomError` with automatic classification.
 - `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise returns a structured `CustomError` using your custom description.
 
+The returned error can be type-asserted to `*reporter.CustomError` when you need direct access to fields such as `ErrorType`, `File`, `Line`, or `FunctionName`:
+
+```go
+err := reporter.AutoWrap(rawErr)
+if customErr, ok := err.(*reporter.CustomError); ok {
+    log.Println(customErr.ErrorType, customErr.File, customErr.Line)
+}
+```
+
+## Internal Helpers
+
+The package also has several unexported helper functions used internally:
+
+| Function           | Purpose                                                                 |
+| ------------------ | ----------------------------------------------------------------------- |
+| `newError`         | Builds `CustomError`, captures caller metadata, prints it, and triggers Kafka publishing when enabled. |
+| `sendToKafka`      | Serializes `CustomError` to JSON and writes it to Kafka.                |
+| `containsAny`      | Checks whether a string contains at least one expected substring.       |
+| `byteContains`     | Performs byte-level substring matching for internal checks.             |
+| `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase for internal normalization. |
+
+These helpers are not exported, so application code should use only `Init`, `Close`, `AutoWrap`, `Wrap`, `Config`, and `CustomError`.
+
 ## Notes
 
-- Always call `Init()` before wrapping errors if you want `service`, `environment`, and Kafka publishing to be configured correctly.
+- Always call `Init(reporter.Config{...})` before wrapping errors if you want `service`, `environment`, and Kafka publishing to be configured correctly.
 - Always call `Close()` during shutdown in services that publish to Kafka.
 - Do not use this package as a replacement for normal application error handling. It is intended for reporting and alerting.

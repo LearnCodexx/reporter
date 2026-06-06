@@ -8,7 +8,10 @@
 //
 // Initialize the package once during application startup:
 //
-//	reporter.Init()
+//	reporter.Init(reporter.Config{
+//		AppName: "payment-service",
+//		AppEnv:  "development",
+//	})
 //	defer reporter.Close()
 //
 // Use AutoWrap when reporter should classify the error from its text:

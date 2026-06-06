@@ -2,7 +2,6 @@ package reporter
 
 import (
 	"errors"
-	"reflect"
 	"runtime"
 	"strings"
 	"testing"
@@ -47,14 +46,5 @@ func TestAutoWrapClassifiesErrorCaseInsensitive(t *testing.T) {
 
 	if customErr.ErrorType != "DATABASE_CONSTRAINT" {
 		t.Fatalf("expected DATABASE_CONSTRAINT, got %q", customErr.ErrorType)
-	}
-}
-
-func TestParseBrokers(t *testing.T) {
-	got := parseBrokers(" kafka-1:9092, kafka-2:9092 ,,kafka-3:9092 ")
-	want := []string{"kafka-1:9092", "kafka-2:9092", "kafka-3:9092"}
-
-	if !reflect.DeepEqual(got, want) {
-		t.Fatalf("expected %v, got %v", want, got)
 	}
 }
