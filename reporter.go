@@ -28,8 +28,22 @@ var (
 	appName      string
 	appEnv       string
 	kafkaWriter  *kafka.Writer
+	publisher    Publisher
 	isPublishing bool
 )
+
+// Publisher sends a structured error report to an external destination.
+//
+// Implement this interface when you want to publish reports to something other
+// than the built-in Kafka publisher, such as Redis, a file spool, or a webhook.
+type Publisher interface {
+	Publish(ctx context.Context, report *CustomError) error
+}
+
+// ClosePublisher can be implemented by publishers that hold resources.
+type ClosePublisher interface {
+	Close() error
+}
 
 // Config holds all the configuration parameters required to initialize the reporter.
 // Passing this struct explicitly via function parameters provides better flexibility
@@ -40,6 +54,41 @@ type Config struct {
 	KafkaBrokers     []string
 	KafkaTopic       string
 	EnablePublishing bool
+	Publisher        Publisher
+}
+
+// KafkaPublisher publishes error reports to Kafka as JSON.
+type KafkaPublisher struct {
+	writer *kafka.Writer
+}
+
+// NewKafkaPublisher creates a Kafka-backed reporter publisher.
+func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher {
+	return &KafkaPublisher{
+		writer: &kafka.Writer{
+			Addr:     kafka.TCP(brokers...),
+			Topic:    topic,
+			Balancer: &kafka.LeastBytes{},
+		},
+	}
+}
+
+// Publish serializes the report to JSON and writes it to Kafka.
+func (p *KafkaPublisher) Publish(ctx context.Context, report *CustomError) error {
+	payload, err := json.Marshal(report)
+	if err != nil {
+		return err
+	}
+
+	return p.writer.WriteMessages(ctx, kafka.Message{
+		Key:   []byte(report.Service),
+		Value: payload,
+	})
+}
+
+// Close releases the Kafka writer.
+func (p *KafkaPublisher) Close() error {
+	return p.writer.Close()
 }
 
 // CustomError is the structured error payload produced by this package.
@@ -47,8 +96,8 @@ type Config struct {
 // It contains the information needed for logs and alerts: timestamp,
 // environment, service name, error type, human-readable description, raw error
 // text, caller file path, caller line number, and caller function name.
-// In production, this structure is serialized to JSON and can be published to
-// Kafka for downstream alert delivery, such as Telegram notifications.
+// This structure is passed to publishers and can be serialized to JSON for
+// downstream alert delivery, such as Telegram notifications.
 type CustomError struct {
 	Timestamp    string `json:"timestamp"`
 	Environment  string `json:"environment"`
@@ -86,9 +135,9 @@ func (e *CustomError) Error() string {
 // Init applies reporter configuration for the current service.
 //
 // Call Init once during application startup before using AutoWrap or Wrap. It
-// stores the service name, environment, and optional Kafka settings. When
-// EnablePublishing is true and Kafka settings are complete, Init prepares a
-// Kafka writer so every reported error can be published asynchronously.
+// stores the service name, environment, and optional publishing settings. When
+// EnablePublishing is true and a publisher or complete Kafka settings are
+// provided, every reported error can be published asynchronously.
 //
 // Example:
 //
@@ -108,18 +157,31 @@ func Init(cfg Config) {
 		appEnv = "development"
 	}
 
-	// Build the Kafka connection only when publishing is enabled and settings are complete.
-	if cfg.EnablePublishing && len(cfg.KafkaBrokers) > 0 && cfg.KafkaTopic != "" {
-		kafkaWriter = &kafka.Writer{
-			Addr:     kafka.TCP(cfg.KafkaBrokers...),
-			Topic:    cfg.KafkaTopic,
-			Balancer: &kafka.LeastBytes{},
-		}
-		isPublishing = true
-	} else {
-		// Keep publishing disabled when any requirement is missing or explicitly disabled.
+	kafkaWriter = nil
+	publisher = nil
+
+	if !cfg.EnablePublishing {
 		isPublishing = false
+		return
 	}
+
+	if cfg.Publisher != nil {
+		publisher = cfg.Publisher
+		isPublishing = true
+		return
+	}
+
+	// Build the Kafka connection only when publishing is enabled and settings are complete.
+	if len(cfg.KafkaBrokers) > 0 && cfg.KafkaTopic != "" {
+		kafkaPublisher := NewKafkaPublisher(cfg.KafkaBrokers, cfg.KafkaTopic)
+		kafkaWriter = kafkaPublisher.writer
+		publisher = kafkaPublisher
+		isPublishing = true
+		return
+	}
+
+	// Keep publishing disabled when any requirement is missing or explicitly disabled.
+	isPublishing = false
 }
 
 // Close releases the Kafka writer used by reporter.
@@ -131,9 +193,12 @@ func Init(cfg Config) {
 //
 //	defer reporter.Close()
 func Close() {
-	if kafkaWriter != nil {
-		kafkaWriter.Close()
+	if closeable, ok := publisher.(ClosePublisher); ok {
+		_ = closeable.Close()
 	}
+	kafkaWriter = nil
+	publisher = nil
+	isPublishing = false
 }
 
 // AutoWrap converts an ordinary error into a structured report with automatic classification.
@@ -142,8 +207,7 @@ func Close() {
 // assigns an error type and description for known patterns such as connection
 // failures, duplicate keys, deadline timeouts, and missing data. The returned
 // error captures the caller file path, line number, and function name. In
-// production, the report is also published to Kafka when Init configured a
-// writer.
+// production, the report is also published when Init configured a publisher.
 //
 // Example:
 //
@@ -188,8 +252,7 @@ func AutoWrap(err error) error {
 // better business context than automatic classification. The original error is
 // preserved in RawError, while customDesc is stored in Description. The returned
 // error captures the caller file path, line number, and function name. In
-// production, the report is also published to Kafka when Init configured a
-// writer.
+// production, the report is also published when Init configured a publisher.
 //
 // Example:
 //
@@ -233,26 +296,20 @@ func newError(errType, desc, rawErr string, skip int) error {
 
 	fmt.Println(customErr.Error())
 
-	// Publish to Kafka in a non-blocking background goroutine.
-	if isPublishing {
-		go sendToKafka(customErr)
+	// Publish in a non-blocking background goroutine.
+	if isPublishing && publisher != nil {
+		activePublisher := publisher
+		go publish(activePublisher, customErr)
 	}
 
 	return customErr
 }
 
-// Internal function to publish serialized JSON log payload to the Kafka broker.
-func sendToKafka(e *CustomError) {
-	payload, _ := json.Marshal(e)
-
-	err := kafkaWriter.WriteMessages(context.Background(), kafka.Message{
-		Key:   []byte(e.Service),
-		Value: payload,
-	})
-
-	if err != nil {
-		// If Kafka is unreachable, pipe the error trace directly to Stderr to prevent silent data loss
-		fmt.Fprintf(os.Stderr, "\033[31m[Reporter Kafka Error]: %v\033[0m\n", err)
+// Internal function to publish the structured payload to the configured publisher.
+func publish(p Publisher, e *CustomError) {
+	if err := p.Publish(context.Background(), e); err != nil {
+		// If publishing fails, pipe the error trace directly to Stderr to prevent silent data loss.
+		fmt.Fprintf(os.Stderr, "\033[31m[Reporter Publish Error]: %v\033[0m\n", err)
 	}
 }
 

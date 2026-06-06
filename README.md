@@ -1,6 +1,6 @@
 # Reporter
 
-`reporter` is a small Go package for turning ordinary errors into structured error reports. It captures the caller file path, line number, function name, error description, raw error text, service name, environment, and timestamp. In production, the same structured payload can be published to Kafka so another service can forward the alert to Telegram or any other notification channel.
+`reporter` is a small Go package for turning ordinary errors into structured error reports. It captures the caller file path, line number, function name, error description, raw error text, service name, environment, and timestamp. The same structured payload can be published to Kafka or a custom publisher so another service can forward the alert to Telegram or any other notification channel.
 
 ## What It Produces
 
@@ -21,6 +21,22 @@ Each wrapped error is represented as `CustomError`:
 ```
 
 In non-production environments, `err.Error()` returns a colored terminal-friendly message. In production, `err.Error()` returns JSON.
+
+Publishing does not use `err.Error()`. Publishers receive the structured `CustomError` value, and the built-in Kafka publisher always sends JSON. That means `AppEnv: "development"` still prints a colored local message, but Kafka receives JSON like this:
+
+```json
+{
+  "timestamp": "2026-06-04 14:35:12",
+  "environment": "development",
+  "service": "payment-service",
+  "error_type": "DATABASE_CONSTRAINT",
+  "description": "Failed to save data because of a duplicate data conflict",
+  "raw_error": "duplicate key value violates unique constraint",
+  "file": "service/order.go",
+  "line": 42,
+  "function": "service.CreateOrder"
+}
+```
 
 `AutoWrap` and `Wrap` print the formatted report automatically when they create a `CustomError`. Do not print the returned error again unless you intentionally want duplicate output.
 
@@ -46,8 +62,9 @@ defer reporter.Close()
 | `KafkaBrokers`     | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                           |
 | `KafkaTopic`       | Kafka    | Kafka topic used for alert messages.                                                                 |
 | `EnablePublishing` | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`. |
+| `Publisher`        | No       | Optional custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config. |
 
-Kafka publishing is non-blocking. When `EnablePublishing=true` and Kafka configuration is complete, the package sends the JSON payload in a background goroutine. If Kafka publishing fails, the failure is written to `stderr` so the original error is not lost.
+Publishing is non-blocking. When `EnablePublishing=true` and either `Publisher` or Kafka configuration is complete, the package sends the structured payload in a background goroutine. If publishing fails, the failure is written to `stderr` so the original error is not lost.
 
 If your application stores config in environment variables, read and map them in your own service before calling `Init`:
 
@@ -154,6 +171,54 @@ func main() {
 
 The Kafka message value is the JSON `CustomError` payload. The message key is the service name, which helps consumers group alerts by service. A Telegram alert worker can consume `KAFKA_TOPIC`, decode the JSON, and format a Telegram message using `service`, `environment`, `file`, `line`, `error_type`, `description`, and `raw_error`.
 
+## Custom Publisher
+
+Use a custom publisher when you want Redis, a file spool, a webhook, or another transport without adding that dependency to this package.
+
+```go
+type Publisher interface {
+    Publish(ctx context.Context, report *reporter.CustomError) error
+}
+```
+
+Example Redis-style publisher:
+
+```go
+type RedisPublisher struct {
+    client *redis.Client
+    stream string
+}
+
+func (p *RedisPublisher) Publish(ctx context.Context, report *reporter.CustomError) error {
+    payload, err := json.Marshal(report)
+    if err != nil {
+        return err
+    }
+
+    return p.client.XAdd(ctx, &redis.XAddArgs{
+        Stream: p.stream,
+        Values: map[string]any{
+            "service": report.Service,
+            "payload": string(payload),
+        },
+    }).Err()
+}
+```
+
+Then pass it to `Init`:
+
+```go
+reporter.Init(reporter.Config{
+    AppName:          "payment-service",
+    AppEnv:           "production",
+    EnablePublishing: true,
+    Publisher: &RedisPublisher{
+        client: redisClient,
+        stream: "service-alerts",
+    },
+})
+```
+
 ## Telegram Alert Message Example
 
 A Kafka consumer can convert the JSON payload into a message like this:
@@ -178,16 +243,26 @@ type Config struct {
     KafkaBrokers     []string
     KafkaTopic       string
     EnablePublishing bool
+    Publisher        Publisher
 }
 
+type Publisher interface {
+    Publish(ctx context.Context, report *CustomError) error
+}
+
+type ClosePublisher interface {
+    Close() error
+}
+
+func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher
 func Init(cfg Config)
 func Close()
 func AutoWrap(err error) error
 func Wrap(err error, customDesc string) error
 ```
 
-- `Init(cfg)` stores reporter configuration and prepares Kafka publishing when `EnablePublishing`, `KafkaBrokers`, and `KafkaTopic` are complete.
-- `Close()` closes the Kafka writer during graceful shutdown.
+- `Init(cfg)` stores reporter configuration and prepares publishing when `EnablePublishing` is true and either `Publisher` or Kafka settings are complete.
+- `Close()` closes the active publisher during graceful shutdown when it implements `Close() error`.
 - `AutoWrap(err)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` with automatic classification.
 - `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` using your custom description.
 
@@ -208,8 +283,8 @@ The package also has several unexported helper functions. They are implementatio
 
 | Function           | Purpose                                                                 |
 | ------------------ | ----------------------------------------------------------------------- |
-| `newError`         | Builds `CustomError`, captures caller metadata, prints it, and triggers Kafka publishing when enabled. |
-| `sendToKafka`      | Serializes `CustomError` to JSON and writes it to Kafka.                |
+| `newError`         | Builds `CustomError`, captures caller metadata, prints it, and triggers publishing when enabled. |
+| `publish`          | Sends `CustomError` to the configured publisher.                        |
 | `containsAny`      | Checks whether a string contains at least one expected substring.       |
 | `byteContains`     | Performs byte-level substring matching.                                 |
 | `jsonErrTextLower` | Converts ASCII uppercase letters to lowercase.                          |
@@ -218,6 +293,6 @@ These helpers are not exported, so application code should use only `Init`, `Clo
 
 ## Notes
 
-- Always call `Init(reporter.Config{...})` before wrapping errors if you want `service`, `environment`, and Kafka publishing to be configured correctly.
-- Always call `Close()` during shutdown in services that publish to Kafka.
+- Always call `Init(reporter.Config{...})` before wrapping errors if you want `service`, `environment`, and publishing to be configured correctly.
+- Always call `Close()` during shutdown in services that publish externally.
 - Do not use this package as a replacement for normal application error handling. It is intended for reporting and alerting.
