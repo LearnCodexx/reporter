@@ -1,4 +1,4 @@
-module github.com/learncodexx/reporter
+module github.com/learncodexx/reporter/v2
 
 go 1.25.5
 
