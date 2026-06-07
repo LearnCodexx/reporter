@@ -282,6 +282,26 @@ func main() {
 }
 ```
 
+## Operational Logging (`reporter.Info`)
+
+Use `reporter.Info` to print successful actions, initialization milestones, or routine telemetry. This function is designed strictly for tracking healthy system behavior and only writes to standard output (`stdout`).
+
+It **never** triggers Kafka or external alerting pipelines, making it completely safe from polluting your alert notification channels (such as Telegram or Slack).
+
+### Usage Example
+
+```go
+package main
+
+import "[github.com/learncodexx/reporter](https://github.com/learncodexx/reporter)"
+
+func StartServer() {
+    // Log successful milestones without bothering alerting consumers
+    reporter.Info("SERVER", "HTTP server smoothly binding to port %d", 8080)
+    reporter.Info("DATABASE", "Successfully verified connection handshake with PostgreSQL cluster")
+}
+```
+
 The Kafka message value is the JSON `CustomError` payload. The message key is the service name, which helps consumers group alerts by service. A Telegram alert worker can consume `KAFKA_TOPIC`, decode the JSON, and format a Telegram message using `service`, `environment`, `file`, `line`, `error_type`, `description`, and `raw_error`.
 
 ## Custom Publisher

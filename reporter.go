@@ -154,6 +154,55 @@ func (e *CustomError) Error() string {
 	return string(b)
 }
 
+// Info logs a general informational message or a success indicator.
+//
+// Unlike AutoWrap or Wrap, Info is designed strictly for operational tracking
+// (e.g., "Database connected successfully", "Kafka consumer started"). It only
+// outputs to standard synchronization streams (stdout) and will NEVER publish
+// payloads to Kafka or external alert destinations, preventing log pollution.
+//
+// In non-production environments, it formats the output with terminal-friendly
+// colors synchronized with the CustomError aesthetic. In production, it outputs
+// a structured, single-line JSON log ideal for indexing tools like Elasticsearch.
+//
+// Example:
+//
+//	func ConnectDB() {
+//	    db, err := sql.Open("postgres", dsn)
+//	    if err != nil {
+//	        reporter.AutoWrap(err) // Sent to Kafka as CRITICAL
+//	        return
+//	    }
+//
+//	    // Log success locally/json without triggering alerting pipelines
+//	    reporter.Info("DATABASE", "Successfully connected to PostgreSQL at %s:%d", "127.0.0.1", 5432)
+//	}
+func Info(tag string, format string, args ...interface{}) {
+	msg := fmt.Sprintf(format, args...)
+	timestamp := time.Now().Format("2006-01-02 15:04:05")
+
+	if appEnv != "production" {
+		fmt.Printf("%s[%s]%s %s[INFO]%s  # %s%s%s ➔ %s\n",
+			cGray, timestamp, cReset,
+			cCyan, cReset,
+			cYellow, tag, cReset,
+			msg,
+		)
+		return
+	}
+
+	payload := map[string]string{
+		"timestamp":   timestamp,
+		"environment": appEnv,
+		"service":     appName,
+		"severity":    SeverityInfo,
+		"error_type":  "LOG_INFO",
+		"description": fmt.Sprintf("[%s] %s", tag, msg),
+	}
+	bytes, _ := json.Marshal(payload)
+	fmt.Println(string(bytes))
+}
+
 // Init applies reporter configuration for the current service.
 //
 // Call Init once during application startup before using AutoWrap or Wrap. It
