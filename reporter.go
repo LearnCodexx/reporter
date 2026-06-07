@@ -177,7 +177,7 @@ func (e *CustomError) Error() string {
 //	    // Log success locally/json without triggering alerting pipelines
 //	    reporter.Info("DATABASE", "Successfully connected to PostgreSQL at %s:%d", "127.0.0.1", 5432)
 //	}
-func Info(tag string, format string, args ...interface{}) {
+func Info(tag string, format string, args ...any) {
 	msg := fmt.Sprintf(format, args...)
 	timestamp := time.Now().Format("2006-01-02 15:04:05")
 

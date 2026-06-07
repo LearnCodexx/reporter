@@ -165,6 +165,26 @@ Use `AutoWrap` as a convenient fallback when the application only has an ordinar
 - `WrapHTTPStatus` when the HTTP handler already knows the response status code.
 - `WrapReport` when you want to provide several signals in one call.
 
+## Operational Logging (`reporter.Info`)
+
+Use `reporter.Info` to print successful actions, initialization milestones, or routine telemetry. This function is designed strictly for tracking healthy system behavior and only writes to standard output (`stdout`).
+
+It **never** triggers Kafka or external alerting pipelines, making it completely safe from polluting your alert notification channels (such as Telegram or Slack).
+
+### Usage Example
+
+```go
+package main
+
+import "[github.com/learncodexx/reporter](https://github.com/learncodexx/reporter)"
+
+func StartServer() {
+    // Log successful milestones without bothering alerting consumers
+    reporter.Info("SERVER", "HTTP server smoothly binding to port %d", 8080)
+    reporter.Info("DATABASE", "Successfully verified connection handshake with PostgreSQL cluster")
+}
+```
+
 ## Custom Description
 
 Use `Wrap` when the application already knows the business context and you want to provide a specific description.
@@ -279,26 +299,6 @@ func main() {
         reporter.AutoWrap(err)
         return
     }
-}
-```
-
-## Operational Logging (`reporter.Info`)
-
-Use `reporter.Info` to print successful actions, initialization milestones, or routine telemetry. This function is designed strictly for tracking healthy system behavior and only writes to standard output (`stdout`).
-
-It **never** triggers Kafka or external alerting pipelines, making it completely safe from polluting your alert notification channels (such as Telegram or Slack).
-
-### Usage Example
-
-```go
-package main
-
-import "[github.com/learncodexx/reporter](https://github.com/learncodexx/reporter)"
-
-func StartServer() {
-    // Log successful milestones without bothering alerting consumers
-    reporter.Info("SERVER", "HTTP server smoothly binding to port %d", 8080)
-    reporter.Info("DATABASE", "Successfully verified connection handshake with PostgreSQL cluster")
 }
 ```
 
