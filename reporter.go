@@ -263,6 +263,14 @@ func Init(cfg Config) {
 	isPublishing = false
 }
 
+// SetPublisher enables external publishing after Init has already configured
+// service metadata. This is useful when the publisher depends on a connection
+// that must be created after reporter is available for bootstrap errors.
+func SetPublisher(p Publisher) {
+	publisher = p
+	isPublishing = p != nil
+}
+
 // Close releases the Kafka writer used by reporter.
 //
 // Call Close during graceful shutdown after Init has been called. It is safe to

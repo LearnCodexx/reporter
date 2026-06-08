@@ -62,6 +62,34 @@ func TestAutoWrapClassifiesErrorCaseInsensitive(t *testing.T) {
 	}
 }
 
+func TestSetPublisherEnablesPublishingAfterBootstrapInit(t *testing.T) {
+	Init(Config{
+		AppName:          "reporter-test",
+		AppEnv:           "production",
+		EnablePublishing: false,
+	})
+	defer Close()
+
+	_ = AutoWrap(errors.New("dial tcp redis:6379 connection refused"))
+
+	testPublisher := &channelPublisher{reports: make(chan *CustomError, 1)}
+	SetPublisher(testPublisher)
+
+	_ = AutoWrap(errors.New("dial tcp redis:6379 connection refused"))
+
+	select {
+	case report := <-testPublisher.reports:
+		if report.Service != "reporter-test" {
+			t.Fatalf("expected service reporter-test, got %q", report.Service)
+		}
+		if report.ErrorType != "INFRASTRUCTURE_ERROR" {
+			t.Fatalf("expected INFRASTRUCTURE_ERROR, got %q", report.ErrorType)
+		}
+	case <-time.After(time.Second):
+		t.Fatal("expected report to be published after SetPublisher")
+	}
+}
+
 func TestDevelopmentPublishingUsesStructuredPayload(t *testing.T) {
 	testPublisher := &channelPublisher{reports: make(chan *CustomError, 1)}
 
@@ -319,8 +347,8 @@ func TestWrapHTTPStatusUsesStatusCodeAsClassificationSignal(t *testing.T) {
 	if customErr.ErrorType != "INTERNAL_SERVER_ERROR" {
 		t.Fatalf("expected INTERNAL_SERVER_ERROR, got %q", customErr.ErrorType)
 	}
-	if customErr.Severity != SeverityDanger {
-		t.Fatalf("expected danger severity, got %q", customErr.Severity)
+	if customErr.Severity != SeverityCritical {
+		t.Fatalf("expected critical severity, got %q", customErr.Severity)
 	}
 	if customErr.StatusCode != 500 {
 		t.Fatalf("expected status code 500, got %d", customErr.StatusCode)

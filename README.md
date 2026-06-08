@@ -55,6 +55,27 @@ reporter.Init(reporter.Config{
 defer reporter.Close()
 ```
 
+If your publisher depends on a connection that may fail during startup, initialize reporter first without publishing, create the dependency, then attach the publisher with `SetPublisher`. This lets reporter print bootstrap connection errors before external publishing is available.
+
+```go
+reporter.Init(reporter.Config{
+    AppName:          "payment-service",
+    AppEnv:           "production",
+    EnablePublishing: false,
+})
+defer reporter.Close()
+
+redisClient := redis.NewClient(&redis.Options{
+    Addr: "localhost:6379",
+})
+
+if err := redisClient.Ping(ctx).Err(); err != nil {
+    return reporter.WrapWithSeverity(err, reporter.SeverityCritical, "Failed to connect to Redis")
+}
+
+reporter.SetPublisher(reporter.NewRedisPublisher(redisClient, "service-alerts"))
+```
+
 `Config` fields:
 
 | Field                      | Required | Description                                                                                                                         |
@@ -456,6 +477,7 @@ type ReportOptions struct {
 func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher
 func NewRedisPublisher(client *redis.Client, channel string) *RedisPublisher
 func Init(cfg Config)
+func SetPublisher(p Publisher)
 func Close()
 func AutoWrap(err error) error
 func Wrap(err error, customDesc string) error
@@ -465,6 +487,7 @@ func WrapReport(err error, opts ReportOptions) error
 ```
 
 - `Init(cfg)` stores reporter configuration and prepares publishing when `EnablePublishing` is true and either `Publisher` or Kafka settings are complete.
+- `SetPublisher(p)` attaches or replaces the active publisher after `Init`; passing `nil` disables publishing.
 - `Close()` closes the active publisher during graceful shutdown when it implements `Close() error`.
 - `AutoWrap(err)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` with automatic classification.
 - `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` using your custom description.
