@@ -307,6 +307,16 @@ func AutoWrap(err error) error {
 	// Automatically classify common error text patterns.
 	switch {
 	case containsAny(errText,
+		"Config File",
+		"Not Found in",
+		"not found",
+		"404",
+	):
+		errType = "DATA_NOT_FOUND"
+		autoDesc = "The requested data was not found"
+		severity = SeverityDanger
+
+	case containsAny(errText,
 		"connection refused",
 		"connection reset",
 		"connection timed out",
@@ -353,16 +363,6 @@ func AutoWrap(err error) error {
 		errType = "DATA_NOT_FOUND"
 		autoDesc = "The requested data was not found"
 		severity = SeverityInfo
-
-	case containsAny(errText,
-		"Config File",
-		"Not Found in",
-		"not found",
-		"404",
-	):
-		errType = "DATA_NOT_FOUND"
-		autoDesc = "The requested data was not found"
-		severity = SeverityDanger
 
 	case containsAny(errText,
 		"bad request",
