@@ -73,7 +73,7 @@ if err := redisClient.Ping(ctx).Err(); err != nil {
     return reporter.WrapWithSeverity(err, reporter.SeverityCritical, "Failed to connect to Redis")
 }
 
-reporter.SetPublisher(reporter.NewRedisPublisher(redisClient, "service-alerts"))
+reporter.SetPublisher(reporter.NewRedisListPublisher(redisClient, "service-alerts"))
 ```
 
 `Config` fields:
@@ -85,7 +85,7 @@ reporter.SetPublisher(reporter.NewRedisPublisher(redisClient, "service-alerts"))
 | `KafkaBrokers`             | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                                                          |
 | `KafkaTopic`               | Kafka    | Kafka topic used for alert messages.                                                                                                |
 | `EnablePublishing`         | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`.                               |
-| `Publisher`                | No       | Optional publisher, for example `NewRedisPublisher(...)` or a custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config. |
+| `Publisher`                | No       | Optional publisher, for example `NewRedisListPublisher(...)` or a custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config. |
 | `PublishMinSeverity`       | No       | Minimum severity that may be published. Defaults to `danger`, so handled errors such as duplicate data are not sent to Kafka/Redis. |
 | `AutoWrapFallbackSeverity` | No       | Severity for `AutoWrap` errors that do not match any known pattern. Defaults to `danger`.                                           |
 
@@ -325,9 +325,9 @@ func main() {
 
 The Kafka message value is the JSON `CustomError` payload. The message key is the service name, which helps consumers group alerts by service. A Telegram alert worker can consume `KAFKA_TOPIC`, decode the JSON, and format a Telegram message using `service`, `environment`, `file`, `line`, `error_type`, `description`, and `raw_error`.
 
-## Production Redis Pub/Sub Example
+## Production Redis List Example
 
-Use `NewRedisPublisher` when you want reporter to publish structured error reports to a Redis channel. The Redis publisher serializes `CustomError` to JSON and sends it with the Redis `PUBLISH` command.
+Use `NewRedisListPublisher` when you want reporter to append structured error reports to a Redis list. The Redis publisher serializes `CustomError` to JSON and stores it with the Redis `RPUSH` command.
 
 ```go
 package main
@@ -347,7 +347,7 @@ func main() {
         AppName:          "payment-service",
         AppEnv:           "production",
         EnablePublishing: true,
-        Publisher:        reporter.NewRedisPublisher(redisClient, "service-alerts"),
+        Publisher:        reporter.NewRedisListPublisher(redisClient, "service-alerts"),
     })
     defer reporter.Close()
 
@@ -358,7 +358,7 @@ func main() {
 }
 ```
 
-Redis subscribers receive the same JSON `CustomError` payload used by Kafka publishing. A Telegram alert worker can subscribe to the configured Redis channel, decode the JSON, and format a notification from fields such as `service`, `environment`, `severity`, `error_type`, `description`, and `raw_error`.
+Redis list consumers receive the same JSON `CustomError` payload used by Kafka publishing. A Telegram alert worker can call `BLPOP service-alerts 0` or `LPOP service-alerts`, decode the JSON value, and format a notification from fields such as `service`, `environment`, `severity`, `error_type`, `description`, and `raw_error`.
 
 ## Custom Publisher
 
@@ -420,7 +420,7 @@ reporter.Init(reporter.Config{
 
 ## Telegram Alert Message Example
 
-A Kafka consumer can convert the JSON payload into a message like this:
+A Kafka consumer or Redis list worker can convert the JSON payload into a message like this:
 
 ```text
 [production] payment-service
@@ -475,7 +475,8 @@ type ReportOptions struct {
 }
 
 func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher
-func NewRedisPublisher(client *redis.Client, channel string) *RedisPublisher
+func NewRedisPublisher(client *redis.Client, listName string) *RedisPublisher
+func NewRedisListPublisher(client *redis.Client, listName string) *RedisPublisher
 func Init(cfg Config)
 func SetPublisher(p Publisher)
 func Close()
