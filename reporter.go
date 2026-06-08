@@ -355,6 +355,16 @@ func AutoWrap(err error) error {
 		severity = SeverityInfo
 
 	case containsAny(errText,
+		"Config File",
+		"Not Found in",
+		"not found",
+		"404",
+	):
+		errType = "DATA_NOT_FOUND"
+		autoDesc = "The requested data was not found"
+		severity = SeverityDanger
+
+	case containsAny(errText,
 		"bad request",
 		"validation failed",
 		"invalid input",
