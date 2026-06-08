@@ -64,7 +64,7 @@ defer reporter.Close()
 | `KafkaBrokers`             | Kafka    | Kafka broker list, for example `[]string{"kafka-1:9092", "kafka-2:9092"}`.                                                          |
 | `KafkaTopic`               | Kafka    | Kafka topic used for alert messages.                                                                                                |
 | `EnablePublishing`         | No       | Enables Kafka publishing when `KafkaBrokers` and `KafkaTopic` are also provided. Defaults to `false`.                               |
-| `Publisher`                | No       | Optional custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config.                          |
+| `Publisher`                | No       | Optional publisher, for example `NewRedisPublisher(...)` or a custom publisher. When provided with `EnablePublishing=true`, it is used instead of Kafka config. |
 | `PublishMinSeverity`       | No       | Minimum severity that may be published. Defaults to `danger`, so handled errors such as duplicate data are not sent to Kafka/Redis. |
 | `AutoWrapFallbackSeverity` | No       | Severity for `AutoWrap` errors that do not match any known pattern. Defaults to `danger`.                                           |
 
@@ -121,7 +121,7 @@ reporter.Init(reporter.Config{
 ## Installation
 
 ```bash
-go get github.com/learncodexx/reporter
+go get github.com/learncodexx/reporter/v2
 ```
 
 If this package is used from a private/local module, replace the module path with your repository import path.
@@ -134,7 +134,7 @@ package main
 import (
     "errors"
 
-    "github.com/learncodexx/reporter"
+    "github.com/learncodexx/reporter/v2"
 )
 
 func main() {
@@ -176,7 +176,7 @@ It **never** triggers Kafka or external alerting pipelines, making it completely
 ```go
 package main
 
-import "[github.com/learncodexx/reporter](https://github.com/learncodexx/reporter)"
+import "github.com/learncodexx/reporter/v2"
 
 func StartServer() {
     // Log successful milestones without bothering alerting consumers
@@ -282,7 +282,7 @@ If `AutoWrap` does not match any known pattern, it returns `GENERAL_ERROR`. The 
 package main
 
 import (
-    "github.com/learncodexx/reporter"
+    "github.com/learncodexx/reporter/v2"
 )
 
 func main() {
@@ -304,9 +304,44 @@ func main() {
 
 The Kafka message value is the JSON `CustomError` payload. The message key is the service name, which helps consumers group alerts by service. A Telegram alert worker can consume `KAFKA_TOPIC`, decode the JSON, and format a Telegram message using `service`, `environment`, `file`, `line`, `error_type`, `description`, and `raw_error`.
 
+## Production Redis Pub/Sub Example
+
+Use `NewRedisPublisher` when you want reporter to publish structured error reports to a Redis channel. The Redis publisher serializes `CustomError` to JSON and sends it with the Redis `PUBLISH` command.
+
+```go
+package main
+
+import (
+    "github.com/learncodexx/reporter/v2"
+    "github.com/redis/go-redis/v9"
+)
+
+func main() {
+    redisClient := redis.NewClient(&redis.Options{
+        Addr: "localhost:6379",
+    })
+    defer redisClient.Close()
+
+    reporter.Init(reporter.Config{
+        AppName:          "payment-service",
+        AppEnv:           "production",
+        EnablePublishing: true,
+        Publisher:        reporter.NewRedisPublisher(redisClient, "service-alerts"),
+    })
+    defer reporter.Close()
+
+    if err := run(); err != nil {
+        reporter.AutoWrap(err)
+        return
+    }
+}
+```
+
+Redis subscribers receive the same JSON `CustomError` payload used by Kafka publishing. A Telegram alert worker can subscribe to the configured Redis channel, decode the JSON, and format a notification from fields such as `service`, `environment`, `severity`, `error_type`, `description`, and `raw_error`.
+
 ## Custom Publisher
 
-Use a custom publisher when you want Redis, a file spool, a webhook, or another transport without adding that dependency to this package.
+Use a custom publisher when you want a file spool, webhook, stream, queue, or another transport.
 
 ```go
 type Publisher interface {
@@ -314,27 +349,37 @@ type Publisher interface {
 }
 ```
 
-Example Redis-style publisher:
+Example webhook-style publisher:
 
 ```go
-type RedisPublisher struct {
-    client *redis.Client
-    stream string
+type WebhookPublisher struct {
+    endpoint string
+    client   *http.Client
 }
 
-func (p *RedisPublisher) Publish(ctx context.Context, report *reporter.CustomError) error {
+func (p *WebhookPublisher) Publish(ctx context.Context, report *reporter.CustomError) error {
     payload, err := json.Marshal(report)
     if err != nil {
         return err
     }
 
-    return p.client.XAdd(ctx, &redis.XAddArgs{
-        Stream: p.stream,
-        Values: map[string]any{
-            "service": report.Service,
-            "payload": string(payload),
-        },
-    }).Err()
+    req, err := http.NewRequestWithContext(ctx, http.MethodPost, p.endpoint, bytes.NewReader(payload))
+    if err != nil {
+        return err
+    }
+    req.Header.Set("Content-Type", "application/json")
+
+    resp, err := p.client.Do(req)
+    if err != nil {
+        return err
+    }
+    defer resp.Body.Close()
+
+    if resp.StatusCode >= 400 {
+        return fmt.Errorf("webhook returned status %d", resp.StatusCode)
+    }
+
+    return nil
 }
 ```
 
@@ -345,9 +390,9 @@ reporter.Init(reporter.Config{
     AppName:          "payment-service",
     AppEnv:           "production",
     EnablePublishing: true,
-    Publisher: &RedisPublisher{
-        client: redisClient,
-        stream: "service-alerts",
+    Publisher: &WebhookPublisher{
+        endpoint: "https://alerts.example.com/reporter",
+        client:   http.DefaultClient,
     },
 })
 ```
@@ -409,6 +454,7 @@ type ReportOptions struct {
 }
 
 func NewKafkaPublisher(brokers []string, topic string) *KafkaPublisher
+func NewRedisPublisher(client *redis.Client, channel string) *RedisPublisher
 func Init(cfg Config)
 func Close()
 func AutoWrap(err error) error
