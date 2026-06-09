@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/segmentio/kafka-go"
+	"github.com/sourcegraph/conc"
 )
 
 // ANSI color codes for local terminal output.
@@ -40,6 +41,7 @@ var (
 	isPublishing             bool
 	publishMinSeverity       string
 	autoWrapFallbackSeverity string
+	wg conc.WaitGroup
 )
 
 // Publisher sends a structured error report to an external destination.
@@ -594,6 +596,7 @@ func newError(errType, severity, desc, rawErr string, skip int) error {
 	return newErrorWithStatus(errType, severity, desc, rawErr, 0, skip+1)
 }
 
+
 func newErrorWithStatus(errType, severity, desc, rawErr string, statusCode int, skip int) error {
 	pc, file, line, ok := runtime.Caller(skip)
 	fnName := "unknown"
@@ -627,11 +630,35 @@ func newErrorWithStatus(errType, severity, desc, rawErr string, statusCode int, 
 
 	// Publish in a non-blocking background goroutine.
 	if isPublishing && publisher != nil && shouldPublish(customErr.Severity) {
-		activePublisher := publisher
-		go publish(activePublisher, customErr)
-	}
+			activePublisher := publisher
+
+			wg.Go(func() {
+				publish(activePublisher, customErr)
+			})
+		}
 
 	return customErr
+}
+
+// Flush blocks the calling goroutine until all pending background publishing
+// operations have safely finished executing.
+//
+// This function should be called during a graceful shutdown sequence or immediately
+// before forcing an application exit (e.g., inside log.Fatalf or after a critical
+// startup failure) to guarantee zero log data loss.
+//
+// Example:
+//
+//	func main() {
+//	    rdb, err := ConnectRedis()
+//	    if err != nil {
+//	        reporter.AutoWrap(err)
+//	        reporter.Flush() // Ensures the error above is sent to Redis before exiting
+//	        log.Fatalf("Fatal startup error: %v", err)
+//	    }
+//	}
+func Flush() {
+	wg.Wait() // Akan menahan aplikasi sampai semua wg.Done() dipanggil
 }
 
 // Internal function to publish the structured payload to the configured publisher.

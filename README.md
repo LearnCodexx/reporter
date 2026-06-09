@@ -76,6 +76,30 @@ if err := redisClient.Ping(ctx).Err(); err != nil {
 reporter.SetPublisher(reporter.NewRedisListPublisher(redisClient, "service-alerts"))
 ```
 
+### Graceful Shutdown & Fatal Errors (`reporter.Flush`)
+
+Because the `reporter` publishes logs asynchronously in a background goroutine to maintain high performance, forcing an immediate application exit (like `log.Fatal` or `os.Exit`) might terminate the program before the background logs can reach Redis or Kafka.
+
+To prevent log data loss during a critical startup failure or a standard graceful shutdown sequence, call `reporter.Flush()`. This function blocks the application execution until all pending background publishing operations have safely finished.
+
+```go
+func main() {
+    reporter.Init(reporter.Config{
+        AppName:          "payment-service",
+        AppEnv:           "production",
+        EnablePublishing: true,
+    })
+    defer reporter.Close()
+
+    // Example: Handling a fatal database startup failure
+    if err := connectDatabase(); err != nil {
+        wrappedErr := reporter.AutoWrap(err)
+        
+        reporter.Flush() // <-- CRITICAL: Wait for the background log to be sent safely
+        log.Fatalf("System failed to boot: %v", wrappedErr)
+    }
+}
+
 `Config` fields:
 
 | Field                      | Required | Description                                                                                                                         |
@@ -480,6 +504,7 @@ func NewRedisListPublisher(client *redis.Client, listName string) *RedisPublishe
 func Init(cfg Config)
 func SetPublisher(p Publisher)
 func Close()
+func Flush()
 func AutoWrap(err error) error
 func Wrap(err error, customDesc string) error
 func WrapWithSeverity(err error, severity, customDesc string) error
@@ -490,6 +515,7 @@ func WrapReport(err error, opts ReportOptions) error
 - `Init(cfg)` stores reporter configuration and prepares publishing when `EnablePublishing` is true and either `Publisher` or Kafka settings are complete.
 - `SetPublisher(p)` attaches or replaces the active publisher after `Init`; passing `nil` disables publishing.
 - `Close()` closes the active publisher during graceful shutdown when it implements `Close() error`.
+- `Flush()` blocks until all pending background publishing goroutines are complete, guaranteeing zero data loss before forcing an exit.
 - `AutoWrap(err)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` with automatic classification.
 - `Wrap(err, customDesc)` returns `nil` for `nil` input, otherwise prints and returns a structured `CustomError` using your custom description.
 - `WrapWithSeverity(err, severity, customDesc)` works like `Wrap` but lets application code decide alert priority.
